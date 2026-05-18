@@ -369,7 +369,7 @@ export default function DetectaFake() {
         </p>
         <div className="mt-4 inline-flex items-center gap-2 bg-[#1a2035] px-3 py-1.5 rounded-full text-xs text-gray-400">
           <span className="w-2 h-2 rounded-full bg-[#00d4ff] animate-pulse" />
-          Powered by Claude AI + MiniMax
+          Powered by Mistral + MiniMax
         </div>
       </header>
 
