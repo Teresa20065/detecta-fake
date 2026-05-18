@@ -1,46 +1,37 @@
-import { NextResponse } from "next/server"
+import { NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
-// In-memory storage for demo (would be replaced with database in production)
-const historyStore: Array<{
-  id: number
-  verdict: "VERDADERO" | "FALSO" | "ENGAÑOSO" | "NO VERIFICABLE"
-  score: number
-  reasoning: string
-  redFlags: string[]
-  verifiableElements: string[]
-  analyzedText: string
-  type: "text" | "image"
-  timestamp: Date
-}> = []
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+)
 
 export async function GET() {
-  // Return the last 10 analyses
-  return NextResponse.json({
-    history: historyStore.slice(0, 10),
-  })
-}
-
-export async function POST(request: Request) {
   try {
-    const data = await request.json()
-    
-    const entry = {
-      id: Date.now(),
-      ...data,
-      timestamp: new Date(),
-    }
+    const { data, error } = await supabase
+      .from('analyses')
+      .select('id, created_at, type, verdict, score, analyzed_text, reasoning, red_flags')
+      .order('created_at', { ascending: false })
+      .limit(10)
 
-    // Add to beginning of array
-    historyStore.unshift(entry)
+    if (error) throw error
 
-    // Keep only last 100 entries
-    if (historyStore.length > 100) {
-      historyStore.pop()
-    }
+    const mapped = (data || []).map(item => ({
+      id: item.id,
+      verdict: item.verdict,
+      score: item.score,
+      reasoning: item.reasoning,
+      redFlags: item.red_flags || [],
+      verifiableElements: [],
+      analyzedText: item.analyzed_text || '',
+      type: item.type,
+      timestamp: item.created_at
+    }))
 
-    return NextResponse.json({ success: true, entry })
+    return NextResponse.json({ history: mapped })
+
   } catch (error) {
-    console.error("Error saving history:", error)
-    return NextResponse.json({ error: "Failed to save history" }, { status: 500 })
+    console.error('Error /api/history:', error)
+    return NextResponse.json({ history: [] })
   }
 }

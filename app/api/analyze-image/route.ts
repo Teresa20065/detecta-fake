@@ -1,83 +1,99 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
-// Simulated AI analysis for images
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+const SYSTEM_PROMPT = `Eres DetectaFake, experto en detección de desinformación visual para Latinoamérica.
+Analiza la imagen y responde ÚNICAMENTE con JSON válido, sin markdown, sin texto extra.
+
+Estructura exacta:
+{
+  "verdict": "VERDADERO" | "FALSO" | "ENGAÑOSO" | "NO VERIFICABLE",
+  "score": número 0-100 (100 = completamente falso/manipulado),
+  "reasoning": "Descripción de lo que ves y por qué es o no desinformación (2-3 párrafos en español)",
+  "redFlags": ["señal1", "señal2"],
+  "verifiableElements": ["elemento1"]
+}`
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData()
-    const image = formData.get("image") as File | null
+    const imageFile = formData.get('image') as File
 
-    if (!image) {
-      return NextResponse.json({ error: "Image is required" }, { status: 400 })
+    if (!imageFile) {
+      return NextResponse.json({ error: 'No se recibió imagen' }, { status: 400 })
     }
 
-    // Validate file type
-    if (!image.type.startsWith("image/")) {
-      return NextResponse.json({ error: "Invalid file type" }, { status: 400 })
+    const buffer = await imageFile.arrayBuffer()
+    const base64 = Buffer.from(buffer).toString('base64')
+    const mediaType = imageFile.type || 'image/jpeg'
+
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'DetectaFake'
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-sonnet-4-5',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: { url: `data:${mediaType};base64,${base64}` }
+              },
+              {
+                type: 'text',
+                text: 'Analiza esta imagen en busca de desinformación o manipulación.'
+              }
+            ]
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 1500
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter ${response.status}`)
     }
 
-    // Validate file size (5MB max)
-    if (image.size > 5 * 1024 * 1024) {
-      return NextResponse.json({ error: "File too large (max 5MB)" }, { status: 400 })
-    }
+    const aiData = await response.json()
+    const raw = aiData.choices[0].message.content
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const analysis = JSON.parse(cleaned)
 
-    // Simulate processing delay
-    await new Promise((resolve) => setTimeout(resolve, 2000))
+    supabase.from('analyses').insert({
+      type: 'image',
+      verdict: analysis.verdict,
+      score: analysis.score,
+      reasoning: analysis.reasoning,
+      red_flags: analysis.redFlags || [],
+      verifiable_elements: analysis.verifiableElements || [],
+      analyzed_text: '🖼️ Imagen analizada'
+    }).then(({ error }) => {
+      if (error) console.error('Supabase insert error:', error)
+    })
 
-    // Simulated image analysis responses
-    const analysisResults = [
-      {
-        verdict: "FALSO" as const,
-        score: 87,
-        reasoning: "Se detectaron signos de manipulación digital en la imagen. Los metadatos EXIF indican edición con software de retoque. Las sombras y la iluminación presentan inconsistencias.",
-        redFlags: [
-          "Metadatos EXIF alterados",
-          "Inconsistencias en sombras",
-          "Posible uso de IA generativa",
-          "Compresión inusual en áreas específicas"
-        ],
-        verifiableElements: [] as string[],
-      },
-      {
-        verdict: "ENGAÑOSO" as const,
-        score: 64,
-        reasoning: "La imagen parece auténtica pero ha sido sacada de contexto. Se encontró la imagen original en otras fuentes con fecha y ubicación diferentes.",
-        redFlags: [
-          "Imagen usada fuera de contexto",
-          "Fecha de creación no coincide con lo afirmado"
-        ],
-        verifiableElements: [
-          "Imagen original encontrada en archivo",
-          "Ubicación geográfica verificable"
-        ],
-      },
-      {
-        verdict: "VERDADERO" as const,
-        score: 15,
-        reasoning: "La imagen no presenta signos evidentes de manipulación. Los metadatos son consistentes y no se detectaron alteraciones digitales significativas.",
-        redFlags: [] as string[],
-        verifiableElements: [
-          "Metadatos EXIF intactos",
-          "Sin signos de edición digital",
-          "Consistencia en iluminación y sombras"
-        ],
-      },
-      {
-        verdict: "NO VERIFICABLE" as const,
-        score: 45,
-        reasoning: "No se pudo determinar la autenticidad de la imagen. Los metadatos fueron removidos y no se encontraron coincidencias en bases de datos de imágenes.",
-        redFlags: [
-          "Metadatos removidos"
-        ],
-        verifiableElements: [] as string[],
-      },
-    ]
+    return NextResponse.json({
+      verdict: analysis.verdict,
+      score: analysis.score,
+      reasoning: analysis.reasoning,
+      redFlags: analysis.redFlags || [],
+      verifiableElements: analysis.verifiableElements || [],
+      analyzedText: '🖼️ Imagen analizada'
+    })
 
-    // Return a random analysis result for demo
-    const result = analysisResults[Math.floor(Math.random() * analysisResults.length)]
-
-    return NextResponse.json(result)
   } catch (error) {
-    console.error("Error analyzing image:", error)
-    return NextResponse.json({ error: "Failed to analyze image" }, { status: 500 })
+    console.error('Error /api/analyze-image:', error)
+    return NextResponse.json({ error: 'Error al analizar imagen.' }, { status: 500 })
   }
 }

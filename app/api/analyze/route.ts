@@ -1,101 +1,91 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
-// Simulated AI analysis for text
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+)
+
+const SYSTEM_PROMPT = `Eres DetectaFake, experto en detección de desinformación para Latinoamérica.
+Analiza el texto recibido y responde ÚNICAMENTE con JSON válido, sin markdown, sin texto extra.
+
+Estructura exacta:
+{
+  "verdict": "VERDADERO" | "FALSO" | "ENGAÑOSO" | "NO VERIFICABLE",
+  "score": número 0-100 (100 = completamente falso, 0 = completamente verdadero),
+  "reasoning": "Explicación en español de 2-3 párrafos",
+  "redFlags": ["señal1", "señal2"],
+  "verifiableElements": ["elemento1", "elemento2"]
+}
+
+Criterios:
+- VERDADERO (score 0-30): información precisa y verificable
+- FALSO (score 70-100): información incorrecta o fabricada  
+- ENGAÑOSO (score 40-70): verdades parciales que crean impresión falsa
+- NO VERIFICABLE (score 30-60): no hay suficiente info para determinar`
+
 export async function POST(request: NextRequest) {
   try {
     const { text } = await request.json()
 
-    if (!text || typeof text !== "string") {
-      return NextResponse.json({ error: "Text is required" }, { status: 400 })
+    if (!text || text.trim().length < 10) {
+      return NextResponse.json({ error: 'El texto debe tener al menos 10 caracteres' }, { status: 400 })
     }
 
-    // Simulate processing delay
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'DetectaFake'
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-sonnet-4-5',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: `Analiza este contenido:\n\n${text}` }
+        ],
+        temperature: 0.3,
+        max_tokens: 1500
+      })
+    })
 
-    // Simple heuristic-based analysis for demo purposes
-    const lowerText = text.toLowerCase()
-    
-    // Red flag indicators
-    const redFlagIndicators = [
-      { pattern: /urgente|última hora|breaking/i, flag: "Usa lenguaje urgente típico de desinformación" },
-      { pattern: /comparte antes|difunde|viral/i, flag: "Incita a compartir sin verificar" },
-      { pattern: /el gobierno oculta|no quieren que sepas/i, flag: "Usa teorías conspirativas" },
-      { pattern: /según (fuentes|expertos) (anónimos|cercanos)/i, flag: "Cita fuentes anónimas no verificables" },
-      { pattern: /100%|garantizado|comprobado/i, flag: "Usa afirmaciones absolutas" },
-      { pattern: /cura (milagrosa|definitiva)|remedio secreto/i, flag: "Promete soluciones milagrosas" },
-      { pattern: /whatsapp|cadena|reenvía/i, flag: "Tiene características de cadena viral" },
-    ]
-
-    // Verifiable indicators
-    const verifiableIndicators = [
-      { pattern: /según (reuters|ap|afp|efe)/i, element: "Cita agencia de noticias reconocida" },
-      { pattern: /ministerio|secretaría|gobierno oficial/i, element: "Menciona fuente gubernamental oficial" },
-      { pattern: /estudio (publicado|de) (en |la )?(universidad|journal|revista)/i, element: "Referencia estudio académico" },
-      { pattern: /\d{1,2} de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre)/i, element: "Incluye fecha específica verificable" },
-      { pattern: /https?:\/\/[^\s]+/i, element: "Incluye enlace a fuente" },
-    ]
-
-    const redFlags: string[] = []
-    const verifiableElements: string[] = []
-
-    // Check for red flags
-    for (const { pattern, flag } of redFlagIndicators) {
-      if (pattern.test(text)) {
-        redFlags.push(flag)
-      }
+    if (!response.ok) {
+      const err = await response.text()
+      console.error('OpenRouter error:', err)
+      throw new Error(`OpenRouter ${response.status}`)
     }
 
-    // Check for verifiable elements
-    for (const { pattern, element } of verifiableIndicators) {
-      if (pattern.test(text)) {
-        verifiableElements.push(element)
-      }
-    }
+    const aiData = await response.json()
+    const raw = aiData.choices[0].message.content
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const analysis = JSON.parse(cleaned)
 
-    // Calculate score and verdict based on analysis
-    const redFlagScore = redFlags.length * 20
-    const verifiableScore = verifiableElements.length * 15
-    const baseScore = 50
-
-    let score = Math.max(0, Math.min(100, baseScore + redFlagScore - verifiableScore))
-    
-    // Add some randomness for demo
-    score = Math.max(5, Math.min(95, score + Math.floor(Math.random() * 20) - 10))
-
-    let verdict: "VERDADERO" | "FALSO" | "ENGAÑOSO" | "NO VERIFICABLE"
-    let reasoning: string
-
-    if (redFlags.length === 0 && verifiableElements.length === 0) {
-      verdict = "NO VERIFICABLE"
-      reasoning = "No se encontraron suficientes elementos para verificar la veracidad de esta información. Se recomienda buscar fuentes adicionales antes de compartir."
-      score = Math.floor(Math.random() * 30) + 35
-    } else if (redFlags.length >= 3) {
-      verdict = "FALSO"
-      reasoning = `Se detectaron ${redFlags.length} señales de alerta típicas de desinformación. El contenido presenta patrones comunes en noticias falsas y carece de fuentes verificables.`
-    } else if (redFlags.length >= 1 && verifiableElements.length >= 1) {
-      verdict = "ENGAÑOSO"
-      reasoning = "El contenido mezcla información potencialmente verificable con elementos típicos de desinformación. Puede contener verdades parciales o fuera de contexto."
-    } else if (verifiableElements.length >= 2) {
-      verdict = "VERDADERO"
-      reasoning = "El contenido incluye elementos verificables y cita fuentes reconocidas. Se recomienda contrastar con la fuente original para confirmar."
-      score = Math.floor(Math.random() * 20) + 10
-    } else if (redFlags.length > verifiableElements.length) {
-      verdict = "FALSO"
-      reasoning = "El análisis detectó más señales de alerta que elementos verificables. El contenido presenta características típicas de información falsa."
-    } else {
-      verdict = "ENGAÑOSO"
-      reasoning = "El contenido requiere verificación adicional. Contiene algunos elementos verificables pero también presenta señales de posible manipulación."
-    }
+    supabase.from('analyses').insert({
+      type: 'text',
+      input_text: text,
+      verdict: analysis.verdict,
+      score: analysis.score,
+      reasoning: analysis.reasoning,
+      red_flags: analysis.redFlags || [],
+      verifiable_elements: analysis.verifiableElements || [],
+      analyzed_text: text.slice(0, 200)
+    }).then(({ error }) => {
+      if (error) console.error('Supabase insert error:', error)
+    })
 
     return NextResponse.json({
-      verdict,
-      score,
-      reasoning,
-      redFlags,
-      verifiableElements,
+      verdict: analysis.verdict,
+      score: analysis.score,
+      reasoning: analysis.reasoning,
+      redFlags: analysis.redFlags || [],
+      verifiableElements: analysis.verifiableElements || [],
+      analyzedText: text.slice(0, 200)
     })
+
   } catch (error) {
-    console.error("Error analyzing text:", error)
-    return NextResponse.json({ error: "Failed to analyze text" }, { status: 500 })
+    console.error('Error /api/analyze:', error)
+    return NextResponse.json({ error: 'Error al analizar. Intentá de nuevo.' }, { status: 500 })
   }
 }
