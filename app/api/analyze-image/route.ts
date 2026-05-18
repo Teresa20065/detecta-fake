@@ -31,27 +31,24 @@ export async function POST(request: NextRequest) {
     const base64 = Buffer.from(buffer).toString('base64')
     const mediaType = imageFile.type || 'image/jpeg'
 
-    const response = await fetch(`https://api.minimax.chat/v1/text/chatcompletion_v2`, {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.MINIMAX_API_KEY}`,
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
         'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
+        'X-Title': 'DetectaFake'
       },
       body: JSON.stringify({
-        model: 'MiniMax-VL-01',
+        model: 'anthropic/claude-sonnet-4-5',
         messages: [
-          {
-            role: 'system',
-            content: SYSTEM_PROMPT
-          },
+          { role: 'system', content: SYSTEM_PROMPT },
           {
             role: 'user',
             content: [
               {
                 type: 'image_url',
-                image_url: {
-                  url: `data:${mediaType};base64,${base64}`
-                }
+                image_url: { url: `data:${mediaType};base64,${base64}` }
               },
               {
                 type: 'text',
@@ -66,9 +63,7 @@ export async function POST(request: NextRequest) {
     })
 
     if (!response.ok) {
-      const err = await response.text()
-      console.error('MiniMax error:', err)
-      throw new Error(`MiniMax ${response.status}`)
+      throw new Error(`OpenRouter ${response.status}`)
     }
 
     const aiData = await response.json()
