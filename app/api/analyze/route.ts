@@ -32,16 +32,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'El texto debe tener al menos 10 caracteres' }, { status: 400 })
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
-        'X-Title': 'DetectaFake'
       },
       body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4-5',
+        model: 'mistral-large-latest',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: `Analiza este contenido:\n\n${text}` }
@@ -53,8 +51,8 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       const err = await response.text()
-      console.error('OpenRouter error:', err)
-      throw new Error(`OpenRouter ${response.status}`)
+      console.error('Mistral error:', err)
+      throw new Error(`Mistral ${response.status}`)
     }
 
     const aiData = await response.json()
